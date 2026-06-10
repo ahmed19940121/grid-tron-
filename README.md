@@ -77,15 +77,6 @@ Or just visit the [live demo](https://ahmed19940121.github.io/grid-tron-/).
 Drag to orbit, scroll to zoom. Best watched during the morning ramp
 (05:30–08:00 UK) when demand climbs and the solar bikes join the road.
 
-## 🧠 Why this exists
-
-I’ve spent nine years working in UK energy commercials — PPAs, grid connections,
-imbalance, the lot. The numbers in FUELINST are ones I’ve worked with for years
-in spreadsheets and settlement runs. This is what they look like when you let
-them drive.
-
-Built in one evening with **Claude Fable 5** (Anthropic). The code was the easy
-part — knowing what the grid data means is the moat.
 
 ## 👤 Author
 
