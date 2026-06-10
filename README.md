@@ -11,7 +11,7 @@ Every vehicle ≈ 400 MW. More generation = more traffic, moving faster.
 
 ![UK Grid Tron Motorway — live screenshot](docs/screenshot.png)
 
-> 📸 *To add this screenshot: create a `docs` folder in the repo, take a capture of the live app, name it `screenshot.png` and upload it there. A short screen recording saved as `docs/demo.gif` and embedded the same way works even better.*
+
 
 -----
 
