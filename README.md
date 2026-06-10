@@ -9,8 +9,6 @@ Every vehicle ≈ 400 MW. More generation = more traffic, moving faster.
 ![Engine](https://img.shields.io/badge/engine-Three.js-b46bff?style=flat-square)
 ![Refresh](https://img.shields.io/badge/refresh-every_5_min-ff8c2e?style=flat-square)
 
-![UK Grid Tron Motorway — live screenshot](docs/screenshot.png)
-
 
 
 -----
