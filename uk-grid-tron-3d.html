@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UK GRID // TRON 3D MOTORWAY</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:#01040a;
+    font-family:"Orbitron","Segoe UI",monospace;color:#cfeaff}
+  canvas{display:block}
+  #fx{position:absolute;inset:0;pointer-events:none;z-index:3;
+    background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,.13) 0 1px, transparent 1px 3px),
+      radial-gradient(ellipse at center, transparent 55%, rgba(0,4,12,.8) 100%);}
+
+  #gantry{position:absolute;top:12px;left:50%;transform:translateX(-50%);
+    z-index:5;text-align:center;padding:10px 28px 9px;
+    background:rgba(2,12,24,.74);border:1px solid #0ff3;
+    box-shadow:0 0 18px #0ff4, inset 0 0 24px #0ff1;
+    clip-path:polygon(14px 0,calc(100% - 14px) 0,100% 50%,calc(100% - 14px) 100%,14px 100%,0 50%);}
+  #gantry h1{font-size:14px;font-weight:700;letter-spacing:.34em;color:#9feaff;
+    text-shadow:0 0 8px #0ff,0 0 22px #0ff8;text-transform:uppercase}
+  #gantry .total{font-size:26px;font-weight:800;letter-spacing:.08em;color:#fff;
+    text-shadow:0 0 10px #0ff,0 0 30px #0ff;line-height:1.15}
+  #gantry .total span{font-size:11px;color:#7fc6e8;letter-spacing:.16em;text-shadow:none}
+  #gantry .meta{font-size:10px;letter-spacing:.2em;color:#5fa8cc;margin-top:3px}
+  #gantry .meta b{color:#dff6ff}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px}
+  .dot.live{background:#21ffae;box-shadow:0 0 8px #21ffae;animation:pl 1.6s infinite}
+  .dot.snap{background:#ffb13d;box-shadow:0 0 8px #ffb13d}
+  @keyframes pl{0%,100%{opacity:1}50%{opacity:.3}}
+
+  #matrix{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
+    z-index:5;font-size:10px;letter-spacing:.22em;color:#46e8ff;
+    background:rgba(1,8,16,.78);border:1px solid #0ff2;padding:7px 18px;
+    text-shadow:0 0 6px #0ff8;max-width:94vw;text-align:center;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  #matrix.snap{color:#ffcf7a;border-color:#fb3;text-shadow:0 0 6px #fb38}
+
+  /* live stats board — guaranteed-readable MW per fuel */
+  #stats{position:absolute;top:96px;left:10px;z-index:5;
+    background:rgba(1,8,16,.78);border:1px solid #0ff2;padding:8px 10px;
+    font-size:10px;letter-spacing:.08em;min-width:148px}
+  #stats .row{display:flex;justify-content:space-between;gap:10px;
+    padding:2.5px 0;align-items:center}
+  #stats .nm{display:flex;align-items:center;gap:6px;color:#bfe6ff}
+  #stats .chip{width:8px;height:8px;border-radius:2px;flex:none}
+  #stats .mw{color:#fff;font-weight:700;text-shadow:0 0 6px #0ff6}
+  @media (max-width:600px){
+    #stats{top:auto;bottom:44px;left:6px;font-size:8.5px;min-width:118px;
+      padding:5px 7px;letter-spacing:.04em}
+  }
+
+  #hint{position:absolute;bottom:46px;left:50%;transform:translateX(-50%);
+    z-index:4;font-size:9px;letter-spacing:.3em;color:#3d7fa0;opacity:.85;
+    transition:opacity 1s}
+  @media (max-width:600px){
+    #gantry h1{font-size:10px;letter-spacing:.2em}
+    #gantry .total{font-size:19px}
+    #gantry{padding:8px 14px 7px}
+    #matrix{font-size:8.5px;letter-spacing:.12em}
+  }
+  @media (prefers-reduced-motion: reduce){.dot.live{animation:none}}
+</style>
+</head>
+<body>
+<div id="fx"></div>
+<div id="gantry">
+  <h1>UK Grid Interchange</h1>
+  <div class="total" id="totalGW">—<span> GW</span></div>
+  <div class="meta"><span class="dot live" id="dot"></span><b id="stamp">initialising</b> · 1 vehicle ≈ 400 MW · refresh <b id="cd">5:00</b></div>
+</div>
+<div id="hint">DRAG TO ORBIT · SCROLL TO ZOOM</div>
+<div id="stats"></div>
+<div id="matrix">BOOT SEQUENCE ··· ACQUIRING ELEXON UPLINK</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+/* ═══════════════════════════════════════════════════════════════
+   UK GRID // TRON 3D MOTORWAY
+   Eight neon highways converge on the UK Grid Interchange.
+   Vehicle count AND speed scale with live MW from Elexon FUELINST.
+   Falls back to an embedded real snapshot if the sandbox blocks
+   the live uplink; goes fully live when opened in a browser.
+   ═══════════════════════════════════════════════════════════════ */
+
+const MW_PER_VEHICLE = 400, MAX_V = 24, REFRESH_MS = 5*60*1000;
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* real Elexon values captured 2026-06-09 23:50 UTC — fallback only */
+const SNAPSHOT = {
+  stamp:"2026-06-09T23:50:00Z",
+  mw:{ wind:8090, solar:0, gas:4929, nuclear:2972,
+       hydro:342, biomass:2380, imports:4150, battery:-11 }
+};
+
+/* typicalMax drives the speed boost: higher share of typical peak
+   output = faster traffic on that carriageway */
+const LANES = [
+ {id:"wind",   name:"WIND",    color:0x39ff7e, base:30, typicalMax:16000, kind:"car"},
+ {id:"solar",  name:"SOLAR",   color:0xffe23d, base:26, typicalMax:10000, kind:"bike"},
+ {id:"gas",    name:"GAS",     color:0xff8c2e, base:14, typicalMax:20000, kind:"hgv"},
+ {id:"nuclear",name:"NUCLEAR", color:0x3fa9ff, base:10, typicalMax:5000,  kind:"bus", steady:true},
+ {id:"hydro",  name:"HYDRO",   color:0x2ee6ff, base:12, typicalMax:1500,  kind:"boat", water:true},
+ {id:"biomass",name:"BIOMASS", color:0x8fe34a, base:11, typicalMax:3000,  kind:"tractor"},
+ {id:"imports",name:"IMPORTS", color:0xb46bff, base:15, typicalMax:8000,  kind:"container", tunnel:true},
+ {id:"battery",name:"STORAGE", color:0xdfe9f2, base:17, typicalMax:3000,  kind:"van", twoWay:true},
+];
+const css = c => "#"+c.toString(16).padStart(6,"0");
+
+const state = { mw:{}, dir:{imports:1,battery:1}, total:0,
+                stamp:null, mode:"boot", solarEst:false };
+LANES.forEach(l=>state.mw[l.id]=0);
+
+/* ── DATA ─────────────────────────────────────────────────── */
+async function fetchLive(){
+  const iso = d => d.toISOString().split(".")[0]+"Z";
+  const to = new Date(), from = new Date(to - 45*60*1000);
+  const url = `https://data.elexon.co.uk/bmrs/api/v1/datasets/FUELINST?publishDateTimeFrom=${iso(from)}&publishDateTimeTo=${iso(to)}&format=json`;
+  const ctrl = new AbortController();
+  const tm = setTimeout(()=>ctrl.abort(), 9000);
+  const res = await fetch(url,{signal:ctrl.signal});
+  clearTimeout(tm);
+  if(!res.ok) throw new Error("HTTP "+res.status);
+  const rows = (await res.json()).data||[];
+  if(!rows.length) throw new Error("empty feed");
+  const latest = {};
+  for(const r of rows)
+    if(!latest[r.fuelType] || r.startTime > latest[r.fuelType].startTime)
+      latest[r.fuelType]=r;
+  const g = f => latest[f] ? latest[f].generation : 0;
+  const imports = Object.keys(latest).filter(k=>k.startsWith("INT"))
+    .reduce((s,k)=>s+latest[k].generation,0);
+  const mw = { wind:g("WIND"), gas:g("CCGT")+g("OCGT"), nuclear:g("NUCLEAR"),
+               hydro:g("NPSHYD"), biomass:g("BIOMASS"), battery:g("PS"),
+               imports, solar:0 };
+  try{ /* embedded solar estimate from Carbon Intensity mix */
+    const ci = await fetch("https://api.carbonintensity.org.uk/generation");
+    if(ci.ok){
+      const mix=(await ci.json()).data.generationmix;
+      const pct=(mix.find(m=>m.fuel==="solar")||{}).perc||0;
+      if(pct>0 && pct<95){
+        const tx=Object.values(latest).reduce((s,r)=>s+Math.max(0,r.generation),0);
+        mw.solar=Math.round(tx*pct/(100-pct)); state.solarEst=true;
+      }
+    }
+  }catch(e){}
+  return { mw, stamp: latest.WIND ? latest.WIND.startTime : null };
+}
+
+function apply(data, mode){
+  Object.assign(state.mw, data.mw);
+  state.stamp=data.stamp; state.mode=mode;
+  state.dir.imports = state.mw.imports>=0 ? 1 : -1;
+  state.dir.battery = state.mw.battery>=0 ? 1 : -1;
+  state.total = LANES.reduce((s,l)=>s+Math.max(0,state.mw[l.id]),0);
+  syncTraffic(); updateGantries(); paintHUD();
+}
+async function refresh(){
+  try{ apply(await fetchLive(),"live"); }
+  catch(e){ apply(SNAPSHOT,"snapshot"); }
+  nextRefresh = Date.now()+REFRESH_MS;
+}
+
+/* ── SCENE ────────────────────────────────────────────────── */
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x010409, 110, 320);
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, .1, 600);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+document.body.prepend(renderer.domElement);
+scene.add(new THREE.AmbientLight(0x223344, 1.4));
+
+addEventListener("resize",()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+/* geometry constants */
+const R_HUB=16, R_OUT=120, ROAD_W=8;
+
+/* starfield */
+{
+  const n=700, pos=new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    const r=260+Math.random()*180, th=Math.random()*6.2832, ph=Math.acos(2*Math.random()-1);
+    pos[i*3]=r*Math.sin(ph)*Math.cos(th);
+    pos[i*3+1]=Math.abs(r*Math.cos(ph))*.7+8;
+    pos[i*3+2]=r*Math.sin(ph)*Math.sin(th);
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position",new THREE.BufferAttribute(pos,3));
+  scene.add(new THREE.Points(geo,new THREE.PointsMaterial({color:0x3a7ea8,size:.7,sizeAttenuation:true})));
+}
+
+/* floor grid */
+{
+  const grid=new THREE.GridHelper(560,56,0x0a4a66,0x06283a);
+  grid.position.y=-.25; scene.add(grid);
+  const glow=new THREE.Mesh(
+    new THREE.CircleGeometry(R_HUB*2.4,48),
+    new THREE.MeshBasicMaterial({color:0x0a2c40,transparent:true,opacity:.8}));
+  glow.rotation.x=-Math.PI/2; glow.position.y=-.2; scene.add(glow);
+}
+
+/* shared textures ------------------------------------------------ */
+function gradientTex(){
+  const c=document.createElement("canvas"); c.width=8;c.height=128;
+  const x=c.getContext("2d");
+  const g=x.createLinearGradient(0,0,0,128);
+  g.addColorStop(0,"rgba(255,255,255,1)");
+  g.addColorStop(1,"rgba(255,255,255,0)");
+  x.fillStyle=g;x.fillRect(0,0,8,128);
+  return new THREE.CanvasTexture(c);
+}
+const TRAIL_TEX = gradientTex();
+
+function dashTex(color){
+  const c=document.createElement("canvas"); c.width=16;c.height=64;
+  const x=c.getContext("2d");
+  x.fillStyle=color; x.fillRect(5,4,6,22);
+  const t=new THREE.CanvasTexture(c);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping;
+  return t;
+}
+function waterTex(){
+  const c=document.createElement("canvas"); c.width=64;c.height=64;
+  const x=c.getContext("2d");
+  x.fillStyle="#04243a"; x.fillRect(0,0,64,64);
+  x.strokeStyle="rgba(110,230,255,.55)"; x.lineWidth=2;
+  for(let y=6;y<64;y+=14){
+    x.beginPath();
+    for(let i=0;i<=64;i+=4) x.lineTo(i, y+Math.sin(i/8)*2.4);
+    x.stroke();
+  }
+  const t=new THREE.CanvasTexture(c);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(1,8);
+  return t;
+}
+
+/* ── VEHICLE FACTORY: dark hulls + neon edges (Tron look) ──── */
+function shell(geo, color){
+  const grp=new THREE.Group();
+  grp.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color:0x04070d})));
+  grp.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({color})));
+  return grp;
+}
+function box(w,h,d,color,x=0,y=0,z=0){
+  const s=shell(new THREE.BoxGeometry(w,h,d),color);
+  s.position.set(x,y,z); return s;
+}
+/* all models face -Z (toward the hub) */
+function buildVehicle(kind,color){
+  const v=new THREE.Group();
+  switch(kind){
+    case "car":
+      v.add(box(1.5,.55,2.6,color,0,.45,0));
+      v.add(box(1.2,.45,1.3,color,0,.92,.15));
+      break;
+    case "bike":
+      v.add(box(.45,.6,1.9,color,0,.55,0));
+      v.add(box(.3,.5,.3,color,0,1.0,.35));
+      break;
+    case "hgv":
+      v.add(box(1.9,1.8,1.7,color,0,1.05,-2.0));      // cab
+      v.add(box(2.1,2.3,4.6,color,0,1.3,1.3));        // trailer
+      break;
+    case "bus":
+      v.add(box(1.9,2.0,6.2,color,0,1.15,0));
+      v.add(box(1.95,.25,6.25,color,0,2.2,0));
+      break;
+    case "boat":{
+      v.add(box(1.8,.7,4.4,color,0,.45,0));
+      v.add(box(1.2,.9,1.5,color,0,1.2,.6));
+      const mastG=new THREE.BoxGeometry(.12,2.2,.12);
+      const mast=shell(mastG,color); mast.position.set(0,2.2,-.6); v.add(mast);
+      break;
+    }
+    case "tractor":
+      v.add(box(1.4,1.2,2.2,color,0,1.0,.2));
+      v.add(box(1.1,1.0,1.0,color,0,1.9,.5));
+      v.add(wheel(.95,color,-.85,.95,.9)); v.add(wheel(.95,color,.85,.95,.9));
+      v.add(wheel(.5,color,-.8,.5,-.85)); v.add(wheel(.5,color,.8,.5,-.85));
+      break;
+    case "container":
+      v.add(box(1.9,1.7,1.6,color,0,1.0,-2.4));       // cab
+      v.add(box(2.2,2.4,5.4,color,0,1.45,1.2));       // container
+      v.add(box(2.22,.18,5.42,0xffffff,0,2.65,1.2));  // roof rail
+      break;
+    case "van":
+      v.add(box(1.7,1.5,3.4,color,0,.95,.2));
+      v.add(box(1.6,.9,1.1,color,0,.85,-1.9));
+      break;
+  }
+  /* wheels for road vehicles */
+  if(!["boat","bike","tractor"].includes(kind)){
+    const zs = kind==="hgv"||kind==="container"||kind==="bus" ? [-2.2,0,2.2] : [-.9,.9];
+    for(const z of zs){ v.add(wheel(.42,color,-.95,.42,z)); v.add(wheel(.42,color,.95,.42,z)); }
+  }
+  if(kind==="bike"){ v.add(wheel(.5,color,0,.5,-.8)); v.add(wheel(.5,color,0,.5,.8)); }
+
+  /* light trail */
+  const len = 11;
+  const trail=new THREE.Mesh(
+    new THREE.PlaneGeometry(1.4,len),
+    new THREE.MeshBasicMaterial({map:TRAIL_TEX,color,transparent:true,
+      blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.DoubleSide}));
+  trail.rotation.x=-Math.PI/2;
+  trail.position.set(0,.12,len/2+1.2);
+  v.add(trail);
+
+  /* headlight glow puddle */
+  const pud=new THREE.Mesh(new THREE.CircleGeometry(1.6,16),
+    new THREE.MeshBasicMaterial({color,transparent:true,opacity:.16,
+      blending:THREE.AdditiveBlending,depthWrite:false}));
+  pud.rotation.x=-Math.PI/2; pud.position.y=.08; v.add(pud);
+  return v;
+}
+function wheel(r,color,x,y,z){
+  const g=new THREE.CylinderGeometry(r,r,.3,10);
+  const w=shell(g,color);
+  w.rotation.z=Math.PI/2; w.position.set(x,y,z);
+  return w;
+}
+
+/* ── HIGHWAYS ─────────────────────────────────────────────── */
+const laneGroups=[], gantrySigns=[];
+const ANG = i => i*(Math.PI*2/LANES.length);
+
+LANES.forEach((lane,i)=>{
+  const grp=new THREE.Group();
+  grp.rotation.y=-ANG(i);
+  scene.add(grp);
+  const len=R_OUT-R_HUB, mid=R_HUB+len/2;
+
+  /* road bed */
+  const bedMat = lane.water
+    ? new THREE.MeshBasicMaterial({map:waterTex(),transparent:true,opacity:.95})
+    : new THREE.MeshBasicMaterial({color:0x05090f});
+  const bed=new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W,len),bedMat);
+  bed.rotation.x=-Math.PI/2; bed.position.set(0,0,mid); grp.add(bed);
+  if(lane.water) lane._waterMat=bedMat;
+
+  /* neon edge rails */
+  for(const x of [-ROAD_W/2, ROAD_W/2]){
+    const rail=new THREE.Mesh(new THREE.PlaneGeometry(.32,len),
+      new THREE.MeshBasicMaterial({color:lane.color,transparent:true,opacity:.95,
+        blending:THREE.AdditiveBlending,depthWrite:false}));
+    rail.rotation.x=-Math.PI/2; rail.position.set(x,.04,mid); grp.add(rail);
+    const halo=new THREE.Mesh(new THREE.PlaneGeometry(1.4,len),
+      new THREE.MeshBasicMaterial({color:lane.color,transparent:true,opacity:.10,
+        blending:THREE.AdditiveBlending,depthWrite:false}));
+    halo.rotation.x=-Math.PI/2; halo.position.set(x,.03,mid); grp.add(halo);
+  }
+  /* animated centre dashes */
+  const dt=dashTex(css(lane.color)); dt.repeat.set(1,len/6);
+  const dash=new THREE.Mesh(new THREE.PlaneGeometry(.9,len),
+    new THREE.MeshBasicMaterial({map:dt,transparent:true,opacity:.5,
+      blending:THREE.AdditiveBlending,depthWrite:false}));
+  dash.rotation.x=-Math.PI/2; dash.position.set(0,.05,mid); grp.add(dash);
+  lane._dashTex=dt;
+
+  /* tunnel portal (imports) */
+  if(lane.tunnel){
+    const arch=new THREE.Mesh(new THREE.TorusGeometry(5.4,.32,8,28,Math.PI),
+      new THREE.MeshBasicMaterial({color:lane.color,transparent:true,opacity:.95,
+        blending:THREE.AdditiveBlending}));
+    arch.position.set(0,0,R_OUT-1); grp.add(arch);
+    const mouth=new THREE.Mesh(new THREE.CircleGeometry(5.2,28,0,Math.PI),
+      new THREE.MeshBasicMaterial({color:0x000308}));
+    mouth.position.set(0,0,R_OUT-1.05); grp.add(mouth);
+  }
+
+  /* gantry with live sign at radius 86 */
+  const gz=86, gMat=new THREE.MeshBasicMaterial({color:lane.color,transparent:true,
+    opacity:.85,blending:THREE.AdditiveBlending});
+  for(const x of [-ROAD_W/2-1, ROAD_W/2+1]){
+    const post=new THREE.Mesh(new THREE.BoxGeometry(.3,7,.3),gMat);
+    post.position.set(x,3.5,gz); grp.add(post);
+  }
+  const beam=new THREE.Mesh(new THREE.BoxGeometry(ROAD_W+2.6,.3,.3),gMat);
+  beam.position.set(0,7,gz); grp.add(beam);
+
+  /* sign = sprite: always faces the camera, never fogged out */
+  const signC=document.createElement("canvas"); signC.width=512; signC.height=160;
+  const signT=new THREE.CanvasTexture(signC);
+  const sign=new THREE.Sprite(new THREE.SpriteMaterial({map:signT,
+    transparent:true,depthWrite:false,fog:false}));
+  sign.scale.set(16,5,1);
+  sign.position.set(0,9.6,gz);
+  grp.add(sign);
+  gantrySigns.push({lane,canvas:signC,tex:signT});
+
+  laneGroups.push({lane,grp,vehicles:[]});
+});
+
+function drawSign(s){
+  const x=s.canvas.getContext("2d");
+  x.clearRect(0,0,512,160);
+  x.fillStyle="rgba(2,12,22,.92)"; x.fillRect(0,0,512,160);
+  const col=css(s.lane.color);
+  x.strokeStyle=col; x.lineWidth=7; x.strokeRect(5,5,502,150);
+  x.shadowColor=col; x.shadowBlur=20;
+  x.textAlign="center"; x.fillStyle=col;
+  x.font="700 44px Orbitron, Arial, sans-serif";
+  x.fillText(s.lane.name, 256, 58);
+  x.fillStyle="#ffffff"; x.shadowBlur=14;
+  const v=state.mw[s.lane.id]||0;
+  x.font="800 62px Orbitron, Arial, sans-serif";
+  x.fillText((v<0?"−":"")+Math.abs(Math.round(v)).toLocaleString()+" MW", 256, 130);
+  s.tex.needsUpdate=true;
+}
+function updateGantries(){ gantrySigns.forEach(drawSign); }
+
+/* ── CENTRAL INTERCHANGE ──────────────────────────────────── */
+let beaconSprite, orbiters=[];
+{
+  const ring=new THREE.Mesh(new THREE.RingGeometry(R_HUB-4,R_HUB,64),
+    new THREE.MeshBasicMaterial({color:0x05090f,side:THREE.DoubleSide}));
+  ring.rotation.x=-Math.PI/2; ring.position.y=.01; scene.add(ring);
+
+  for(const r of [R_HUB, R_HUB-4]){
+    const t=new THREE.Mesh(new THREE.TorusGeometry(r,.18,8,80),
+      new THREE.MeshBasicMaterial({color:0x21d6ff,transparent:true,opacity:.95,
+        blending:THREE.AdditiveBlending}));
+    t.rotation.x=Math.PI/2; t.position.y=.05; scene.add(t);
+  }
+  /* beacon */
+  const beam=new THREE.Mesh(new THREE.CylinderGeometry(.7,1.6,34,12,1,true),
+    new THREE.MeshBasicMaterial({color:0x21d6ff,transparent:true,opacity:.20,
+      blending:THREE.AdditiveBlending,side:THREE.DoubleSide,depthWrite:false}));
+  beam.position.y=17; scene.add(beam);
+  const core=new THREE.Mesh(new THREE.CylinderGeometry(.32,.32,34,8),
+    new THREE.MeshBasicMaterial({color:0x9feaff,transparent:true,opacity:.85,
+      blending:THREE.AdditiveBlending}));
+  core.position.y=17; scene.add(core);
+
+  /* orbiting energy packets on the gyratory */
+  for(let k=0;k<4;k++){
+    const m=new THREE.Mesh(new THREE.SphereGeometry(.5,10,10),
+      new THREE.MeshBasicMaterial({color:0x7df3ff,blending:THREE.AdditiveBlending,
+        transparent:true,opacity:.95}));
+    scene.add(m); orbiters.push(m);
+  }
+  /* total GW sprite */
+  const c=document.createElement("canvas"); c.width=512;c.height=192;
+  beaconSprite={canvas:c,tex:new THREE.CanvasTexture(c)};
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:beaconSprite.tex,
+    transparent:true,depthWrite:false,fog:false}));
+  sp.scale.set(26,9.75,1); sp.position.set(0,30,0); scene.add(sp);
+}
+function drawBeacon(){
+  const x=beaconSprite.canvas.getContext("2d");
+  x.clearRect(0,0,512,192);
+  x.textAlign="center";
+  x.fillStyle="#9feaff"; x.shadowColor="#21d6ff"; x.shadowBlur=16;
+  x.font="700 38px Orbitron, monospace";
+  x.fillText("UK GRID", 256, 62);
+  x.fillStyle="#ffffff"; x.shadowBlur=24;
+  x.font="800 76px Orbitron, monospace";
+  x.fillText(state.total?(state.total/1000).toFixed(1)+" GW":"——", 256, 152);
+  beaconSprite.tex.needsUpdate=true;
+}
+
+/* ── TRAFFIC ──────────────────────────────────────────────── */
+const vCount = v => Math.abs(v)<25 ? 0 :
+  Math.min(MAX_V, Math.max(1, Math.round(Math.abs(v)/MW_PER_VEHICLE)));
+
+function spawnState(lane){
+  let dir = state.dir[lane.id]||1;
+  if(lane.twoWay && Math.random()<.3) dir=-dir;
+  return { dir, lat:(Math.random()<.5?-1:1)*(1.4+Math.random()*1.2),
+           jit:.85+Math.random()*.3, bob:Math.random()*6.28 };
+}
+function syncTraffic(){
+  for(const L of laneGroups){
+    const want=vCount(state.mw[L.lane.id]);
+    while(L.vehicles.length<want){
+      const mesh=buildVehicle(L.lane.kind, L.lane.color);
+      const st=spawnState(L.lane);
+      const v={mesh,t:Math.random(),...st};
+      mesh.rotation.y = v.dir===1 ? 0 : Math.PI;
+      L.grp.add(mesh); L.vehicles.push(v);
+    }
+    while(L.vehicles.length>want){
+      const v=L.vehicles.pop(); L.grp.remove(v.mesh);
+    }
+    /* speed factor: more MW = faster traffic */
+    const share=Math.min(1, Math.abs(state.mw[L.lane.id])/L.lane.typicalMax);
+    L.speedMul = .55 + share*1.1;
+  }
+}
+
+function stepTraffic(dt, now){
+  const span=R_OUT-R_HUB-6;
+  for(const L of laneGroups){
+    const lane=L.lane;
+    const sp=(reduced?lane.base*.12:lane.base)*(L.speedMul||1)/span;
+    for(const v of L.vehicles){
+      v.t -= v.dir*sp*(lane.steady?1:v.jit)*dt;
+      if(v.dir===1 && v.t<0){ Object.assign(v,spawnState(lane)); v.t=1;
+        v.mesh.rotation.y=v.dir===1?0:Math.PI; }
+      if(v.dir===-1 && v.t>1){ Object.assign(v,spawnState(lane)); v.t=0;
+        v.mesh.rotation.y=v.dir===1?0:Math.PI; }
+      const z=R_HUB+6+v.t*span;
+      v.mesh.position.set(v.lat*v.dir, lane.water?Math.sin(now/300+v.bob)*.22:0, z);
+    }
+    /* animate dashes & water */
+    if(L.lane._dashTex) L.lane._dashTex.offset.y += (state.dir[lane.id]===-1?-1:1)*dt*1.4*(L.speedMul||1);
+    if(L.lane._waterMat) L.lane._waterMat.map.offset.y += dt*.5;
+  }
+  /* hub orbiters */
+  orbiters.forEach((m,k)=>{
+    const a=(reduced?k*1.7:now/800)+k*(6.2832/orbiters.length);
+    m.position.set(Math.cos(a)*(R_HUB-2), .6, Math.sin(a)*(R_HUB-2));
+  });
+}
+
+/* ── CAMERA: auto-orbit + drag + zoom ─────────────────────── */
+let theta=.6, phi=1.05, dist=125, dragging=false, lx=0, ly=0, idle=0;
+const cvEl=renderer.domElement;
+cvEl.addEventListener("pointerdown",e=>{dragging=true;lx=e.clientX;ly=e.clientY;idle=0;
+  document.getElementById("hint").style.opacity=0;});
+addEventListener("pointerup",()=>dragging=false);
+addEventListener("pointermove",e=>{
+  if(!dragging) return;
+  theta -= (e.clientX-lx)*.005; phi -= (e.clientY-ly)*.005;
+  phi=Math.max(.35,Math.min(1.35,phi)); lx=e.clientX; ly=e.clientY; idle=0;
+});
+cvEl.addEventListener("wheel",e=>{
+  dist=Math.max(50,Math.min(240,dist+e.deltaY*.12)); e.preventDefault();
+},{passive:false});
+
+/* ── HUD ──────────────────────────────────────────────────── */
+const elT=document.getElementById("totalGW"), elS=document.getElementById("stamp"),
+      elC=document.getElementById("cd"), elM=document.getElementById("matrix"),
+      elD=document.getElementById("dot");
+let nextRefresh=Date.now()+REFRESH_MS;
+
+function paintHUD(){
+  elT.innerHTML=(state.total/1000).toFixed(1)+"<span> GW IN TRANSIT</span>";
+  document.getElementById("stats").innerHTML = LANES.map(l=>{
+    const v=state.mw[l.id]||0;
+    return `<div class="row"><span class="nm"><span class="chip" style="background:${css(l.color)};box-shadow:0 0 6px ${css(l.color)}"></span>${l.name}</span><span class="mw">${(v<0?"−":"")+Math.abs(Math.round(v)).toLocaleString()} MW</span></div>`;
+  }).join("");
+  const d=state.stamp?new Date(state.stamp):null;
+  const t=d?d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}):"";
+  if(state.mode==="live"){
+    elD.className="dot live"; elS.textContent="LIVE · "+t;
+    elM.classList.remove("snap");
+    let n="WIND▸CARS · SOLAR▸BIKES · GAS▸HGV · NUCLEAR▸BUS · HYDRO▸BOATS · BIOMASS▸TRACTORS · IMPORTS▸TUNNEL · STORAGE▸VANS";
+    if(state.solarEst) n+=" · SOLAR≈CI MIX";
+    if(state.dir.imports===-1) n+=" · NET EXPORT";
+    if(state.dir.battery===-1) n+=" · STORAGE CHARGING";
+    elM.textContent=n;
+  }else{
+    elD.className="dot snap"; elS.textContent="SNAPSHOT · "+t;
+    elM.classList.add("snap");
+    elM.textContent="LIVE UPLINK BLOCKED BY SANDBOX — EMBEDDED ELEXON SNAPSHOT · DOWNLOAD & OPEN IN BROWSER FOR LIVE DATA";
+  }
+  drawBeacon();
+}
+setInterval(()=>{
+  const s=Math.max(0,Math.round((nextRefresh-Date.now())/1000));
+  elC.textContent=Math.floor(s/60)+":"+String(s%60).padStart(2,"0");
+},1000);
+
+/* ── MAIN LOOP ────────────────────────────────────────────── */
+let last=performance.now();
+function loop(now){
+  const dt=Math.min(.05,(now-last)/1000); last=now;
+  idle+=dt;
+  if(!dragging && idle>2 && !reduced) theta+=dt*.05;   /* gentle auto-orbit */
+  camera.position.set(
+    Math.sin(theta)*Math.sin(phi)*dist,
+    Math.cos(phi)*dist,
+    Math.cos(theta)*Math.sin(phi)*dist);
+  camera.lookAt(0,4,0);
+  stepTraffic(dt, now);
+  renderer.render(scene,camera);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+drawBeacon(); updateGantries();
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>
